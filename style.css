@@ -519,8 +519,10 @@ button { cursor: pointer; }
   background: var(--bg-secondary);
   border: 1px solid var(--accent);
   width: 100%;
-  max-width: 480px;
-  overflow: hidden;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   animation: modalIn 0.18s ease;
   box-shadow:
     0 0 30px rgba(153, 69, 255, 0.3),
@@ -798,6 +800,134 @@ button { cursor: pointer; }
   .generate-section { justify-content: stretch; }
   .generate-section .btn { flex: 1; justify-content: center; }
   .view-actions .btn { flex: 1; justify-content: center; }
+}
+
+/* =============================================
+   INPUT TABS
+   ============================================= */
+.input-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  border: 1px solid var(--border-hover);
+  overflow: hidden;
+}
+.tab-btn {
+  flex: 1;
+  padding: 11px 16px;
+  background: var(--bg-secondary);
+  border: none;
+  border-right: 1px solid var(--border-hover);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
+}
+.tab-btn:last-child { border-right: none; }
+.tab-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+.tab-btn.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(153, 69, 255, 0.35);
+}
+
+/* =============================================
+   INPUT GROUP (text/image modals)
+   ============================================= */
+.input-group { display: flex; flex-direction: column; gap: 6px; }
+.input-group label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.input-group .input-field { font-size: 13px; }
+.input-group textarea.input-field {
+  resize: vertical;
+  min-height: 220px;
+  line-height: 1.6;
+}
+
+/* =============================================
+   IMAGE DROP AREA (inside modal)
+   ============================================= */
+.image-drop-area {
+  position: relative;
+  border: 2px dashed var(--border-hover);
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
+  background: var(--bg-primary);
+}
+.image-drop-area:hover,
+.image-drop-area.dragover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  box-shadow: 0 0 16px rgba(153, 69, 255, 0.2);
+}
+
+/* =============================================
+   PREVIEW IMAGE — upload workspace
+   ============================================= */
+.preview-image-wrap {
+  padding: 24px;
+  text-align: center;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border);
+}
+.preview-image-wrap img {
+  max-width: 100%;
+  max-height: 360px;
+  border: 1px solid var(--border-hover);
+  display: inline-block;
+}
+
+/* =============================================
+   VIEW FILE IMAGE (view mode)
+   ============================================= */
+.view-file-image {
+  padding: 24px;
+  text-align: center;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border);
+}
+.view-file-image img {
+  max-width: 100%;
+  max-height: 420px;
+  border: 1px solid var(--border-hover);
+  display: inline-block;
+}
+
+/* =============================================
+   TREE DRAG AND DROP
+   ============================================= */
+.tree-item[draggable="true"] { cursor: grab; }
+.tree-item[draggable="true"]:active { cursor: grabbing; }
+
+.tree-item.dragging {
+  opacity: 0.4;
+  background: var(--bg-tertiary);
+}
+
+.tree-item.drag-over,
+.file-tree.drag-over {
+  background: rgba(153, 69, 255, 0.1) !important;
+  border-left-color: var(--accent) !important;
+  outline: 1px dashed var(--accent);
+}
+.tree-item.drag-over .tree-item-name { color: var(--accent); }
+
+.file-tree.drag-over {
+  outline: 1px dashed var(--accent);
+  outline-offset: -2px;
 }
 
 /* =============================================

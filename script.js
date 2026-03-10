@@ -7,7 +7,7 @@
 // ── CONFIG ─────────────────────────────────────
 const DPASTE_API = 'https://dpaste.com/api/v2/';
 
-const EXTENSIONS = [
+const TEXT_EXTENSIONS = [
   '.html', '.css', '.js', '.ts', '.tsx', '.jsx',
   '.json', '.md',  '.txt', '.vue', '.svelte',
   '.yaml', '.yml', '.xml', '.svg', '.env',
@@ -15,18 +15,16 @@ const EXTENSIONS = [
   '.rs',  '.php', '.java', '.c',  '.cpp',
   '.h',   '.cs',  '.kt',  '.swift', '.toml',
   '.lock', '.ini', '.conf', '.dockerfile',
-  '.prettierrc', '.eslintrc', '.babelrc',
+  '.prettierrc', '.eslintrc', '.babelrc', '.npmrc',
+  '.editorconfig',
 ];
 
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico'];
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.svg'];
 
 // ── STATE ───────────────────────────────────────
-// files shape:
-//   text  → { type: 'text',  content: 'string...' }
-//   image → { type: 'image', content: 'data:image/...;base64,...', mimeType: 'image/png' }
-let files       = {};
-let folders     = {};   // { "path/": true } — collapsed/expanded state
-let activeFile  = null; // currently previewed file path
+let files      = {};   // { path: { type: 'text'|'image', content, mimeType? } }
+let folders    = {};   // { "path/": true } — expanded state
+let activeFile = null;
 
 // ── UTILS ───────────────────────────────────────
 function isTextFile(name) {
@@ -34,12 +32,11 @@ function isTextFile(name) {
   const noExtNames = ['.gitignore', '.env', 'dockerfile', '.editorconfig',
                       '.prettierrc', '.eslintrc', '.babelrc', '.npmrc'];
   if (noExtNames.some(n => lower.endsWith(n))) return true;
-  return EXTENSIONS.some(ext => lower.endsWith(ext));
+  return TEXT_EXTENSIONS.some(ext => lower.endsWith(ext));
 }
 
 function isImageFile(name) {
-  const lower = name.toLowerCase();
-  return IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext));
+  return IMAGE_EXTENSIONS.some(ext => name.toLowerCase().endsWith(ext));
 }
 
 function readFileAsDataURL(file) {
@@ -52,22 +49,21 @@ function readFileAsDataURL(file) {
 }
 
 function formatSize(bytes) {
-  if (bytes < 1024)       return bytes + ' B';
-  if (bytes < 1024*1024)  return (bytes/1024).toFixed(1) + ' KB';
-  return (bytes/(1024*1024)).toFixed(1) + ' MB';
+  if (bytes < 1024)      return bytes + ' B';
+  if (bytes < 1024*1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024*1024)).toFixed(1) + ' MB';
 }
 
 function totalSize() {
   return Object.values(files).reduce((s, f) => {
-    const c = typeof f === 'object' ? f.content : f;
+    const c = (f && typeof f === 'object') ? f.content : f;
     return s + (c ? c.length : 0);
   }, 0);
 }
 
-// Normalise a file entry — old drops stored plain strings;
-// new drops store { type, content }. Always return { type, content }.
+// Normalise a file entry — old drops stored plain strings; new store { type, content }.
 function normaliseFile(f) {
-  if (typeof f === 'string') return { type: 'text', content: f };
+  if (!f || typeof f === 'string') return { type: 'text', content: f || '' };
   return f;
 }
 
@@ -78,40 +74,50 @@ function fileExt(name) {
 
 function fileIcon(name) {
   const ext = fileExt(name.split('/').pop());
-  if (IMAGE_EXTENSIONS.includes(ext)) return '🖼️';
+  if (['.png','.jpg','.jpeg','.gif','.webp','.bmp','.ico'].includes(ext)) return '🖼️';
   const map = {
-    '.html': '🌐', '.css': '🎨', '.js': '📜', '.ts': '📘',
-    '.tsx': '⚛️',  '.jsx': '⚛️', '.json': '📋', '.md': '📝',
-    '.txt': '📄', '.vue': '💚', '.svelte': '🔥', '.yaml': '⚙️',
-    '.yml': '⚙️', '.xml': '📰', '.svg': '🖼️', '.env': '🔐',
-    '.sh':  '💻', '.py': '🐍',  '.rb': '💎', '.go': '🐹',
-    '.rs':  '🦀', '.php': '🐘', '.java': '☕', '.c': '⚡',
-    '.cpp': '⚡', '.cs': '🔷',  '.kt': '🟣', '.swift': '🍎',
+    '.html':'🌐','.css':'🎨','.js':'📜','.ts':'📘',
+    '.tsx':'⚛️', '.jsx':'⚛️','.json':'📋','.md':'📝',
+    '.txt':'📄', '.vue':'💚','.svelte':'🔥','.yaml':'⚙️',
+    '.yml':'⚙️', '.xml':'📰','.svg':'🖼️','.env':'🔐',
+    '.sh':'💻',  '.py':'🐍', '.rb':'💎', '.go':'🐹',
+    '.rs':'🦀',  '.php':'🐘','.java':'☕','.c':'⚡',
+    '.cpp':'⚡', '.cs':'🔷', '.kt':'🟣', '.swift':'🍎',
   };
   return map[ext] || '📄';
 }
 
 function escapeHtml(str) {
-  return str
+  return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
 
+function getLangFromPath(path) {
+  const ext = fileExt(path.split('/').pop());
+  const map = {
+    '.js':'javascript','.ts':'typescript','.tsx':'tsx','.jsx':'jsx',
+    '.html':'html','.css':'css','.json':'json','.md':'markdown',
+    '.py':'python','.rb':'ruby','.go':'go','.rs':'rust',
+    '.java':'java','.c':'c','.cpp':'cpp','.cs':'csharp',
+    '.php':'php','.sh':'bash','.yaml':'yaml','.yml':'yaml',
+    '.xml':'xml','.svg':'xml','.vue':'vue','.svelte':'svelte',
+    '.txt':'',
+  };
+  return map[ext] || '';
+}
+
 // ── ROUTING ─────────────────────────────────────
 function getRoute() {
   const path = window.location.pathname;
   console.log('[CodeDrop] pathname:', path);
-
-  // Match /v/ID — ID can be alphanumeric, including dpaste IDs like "ABC1DEF2"
   const match = path.match(/^\/v\/([a-zA-Z0-9_-]+)$/);
-
   if (match) {
     console.log('[CodeDrop] mode: view | id:', match[1]);
     return { mode: 'view', binId: match[1] };
   }
-
   console.log('[CodeDrop] mode: upload');
   return { mode: 'upload' };
 }
@@ -126,7 +132,6 @@ async function saveToBin(data) {
   formData.append('syntax', 'text');
   formData.append('expiry_days', '365');
 
-  // Try direct POST first (dpaste supports CORS on POST)
   let res;
   try {
     res = await fetch(DPASTE_API, {
@@ -134,36 +139,31 @@ async function saveToBin(data) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: formData.toString(),
     });
-    console.log('[CodeDrop] save response status:', res.status);
+    console.log('[CodeDrop] save direct status:', res.status);
   } catch (directErr) {
     console.warn('[CodeDrop] direct POST failed, trying proxy:', directErr.message);
-    const proxyPost = `https://corsproxy.io/?url=${encodeURIComponent(DPASTE_API)}`;
-    res = await fetch(proxyPost, {
+    const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(DPASTE_API)}`;
+    res = await fetch(proxyUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: formData.toString(),
     });
-    console.log('[CodeDrop] proxy save response status:', res.status);
+    console.log('[CodeDrop] proxy save status:', res.status);
   }
 
   if (!res.ok) throw new Error('Falha ao salvar: HTTP ' + res.status);
 
-  // dpaste retorna a URL no corpo da resposta, ex: "https://dpaste.com/ABC123\n"
   const pasteUrl = await res.text();
   console.log('[CodeDrop] paste URL returned:', pasteUrl.trim());
   const pasteId  = pasteUrl.trim().replace(/\/$/, '').split('/').pop();
   console.log('[CodeDrop] extracted pasteId:', pasteId);
-
   return pasteId;
 }
 
 async function loadFromBin(pasteId) {
   console.log('[CodeDrop] loadFromBin → id:', pasteId);
-
-  // dpaste CORS workaround: use a CORS proxy to fetch the raw .txt content
   const directUrl = `https://dpaste.com/${pasteId}.txt`;
   const proxyUrl  = `https://corsproxy.io/?url=${encodeURIComponent(directUrl)}`;
-
   console.log('[CodeDrop] fetching via proxy:', proxyUrl);
 
   let compressed;
@@ -174,7 +174,6 @@ async function loadFromBin(pasteId) {
     compressed = await res.text();
   } catch (proxyErr) {
     console.warn('[CodeDrop] proxy failed, trying direct:', proxyErr.message);
-    // Fallback: try direct (works if CORS is allowed by dpaste for the given browser)
     const res2 = await fetch(directUrl);
     console.log('[CodeDrop] direct response status:', res2.status);
     if (!res2.ok) throw new Error('Paste não encontrado: HTTP ' + res2.status);
@@ -183,13 +182,11 @@ async function loadFromBin(pasteId) {
 
   console.log('[CodeDrop] raw data length:', compressed.length);
   const trimmed = compressed.trim();
-
   const decompressed = LZString.decompressFromBase64(trimmed);
   if (!decompressed) {
     console.error('[CodeDrop] decompression failed — raw snippet:', trimmed.slice(0, 120));
     throw new Error('Falha ao descomprimir: dados corrompidos ou formato inválido');
   }
-
   console.log('[CodeDrop] decompressed length:', decompressed.length);
   const parsed = JSON.parse(decompressed);
   console.log('[CodeDrop] files loaded:', Object.keys(parsed).length);
@@ -207,12 +204,11 @@ async function processZip(file) {
     if (!clean || clean.startsWith('.')) return;
 
     if (isTextFile(relativePath)) {
-      const p = entry.async('string').then(content => {
+      promises.push(entry.async('string').then(content => {
         out[clean] = { type: 'text', content };
-      });
-      promises.push(p);
+      }));
     } else if (isImageFile(relativePath)) {
-      const p = entry.async('base64').then(b64 => {
+      promises.push(entry.async('base64').then(b64 => {
         const ext  = fileExt(relativePath).replace('.', '');
         const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
                    : ext === 'png'  ? 'image/png'
@@ -220,8 +216,7 @@ async function processZip(file) {
                    : ext === 'webp' ? 'image/webp'
                    : 'image/' + ext;
         out[clean] = { type: 'image', content: `data:${mime};base64,${b64}`, mimeType: mime };
-      });
-      promises.push(p);
+      }));
     }
   });
   await Promise.all(promises);
@@ -237,12 +232,10 @@ async function processEntry(entry, basePath) {
     if (isTextFile(fullPath)) {
       out[fullPath] = { type: 'text', content: await file.text() };
     } else if (isImageFile(fullPath)) {
-      const dataUrl = await readFileAsDataURL(file);
-      out[fullPath] = { type: 'image', content: dataUrl, mimeType: file.type };
+      out[fullPath] = { type: 'image', content: await readFileAsDataURL(file), mimeType: file.type };
     }
   } else if (entry.isDirectory) {
     const reader = entry.createReader();
-    // readEntries may return partial results — loop until empty
     let allEntries = [];
     await (async function readAll() {
       const batch = await new Promise(res => reader.readEntries(res));
@@ -252,8 +245,7 @@ async function processEntry(entry, basePath) {
       }
     })();
     for (const child of allEntries) {
-      const sub = await processEntry(child, basePath + entry.name + '/');
-      Object.assign(out, sub);
+      Object.assign(out, await processEntry(child, basePath + entry.name + '/'));
     }
   }
   return out;
@@ -269,9 +261,8 @@ async function handleFiles(fileList) {
       showToast('Descompactando ' + file.name + '…', 'info');
       try {
         const extracted = await processZip(file);
-        const count = Object.keys(extracted).length;
         Object.assign(files, extracted);
-        added += count;
+        added += Object.keys(extracted).length;
       } catch (e) {
         showToast('Erro ao extrair ZIP: ' + e.message, 'error');
       }
@@ -279,8 +270,7 @@ async function handleFiles(fileList) {
       files[file.name] = { type: 'text', content: await file.text() };
       added++;
     } else if (isImageFile(file.name)) {
-      const dataUrl = await readFileAsDataURL(file);
-      files[file.name] = { type: 'image', content: dataUrl, mimeType: file.type };
+      files[file.name] = { type: 'image', content: await readFileAsDataURL(file), mimeType: file.type };
       added++;
     }
   }
@@ -289,7 +279,7 @@ async function handleFiles(fileList) {
     showToast(added + ' arquivo(s) adicionado(s)', 'success');
     renderWorkspace();
   } else {
-    showToast('Nenhum arquivo de texto suportado encontrado', 'error');
+    showToast('Nenhum arquivo suportado encontrado', 'error');
   }
 }
 
@@ -299,7 +289,6 @@ async function handleDrop(e) {
 
   const items = e.dataTransfer.items;
   if (items && items.length > 0) {
-    // Check for folder entries
     const entries = Array.from(items)
       .map(item => item.webkitGetAsEntry && item.webkitGetAsEntry())
       .filter(Boolean);
@@ -311,9 +300,7 @@ async function handleDrop(e) {
           const result = await processEntry(entry, '');
           Object.assign(files, result);
           added += Object.keys(result).length;
-        } catch (e2) {
-          // fallback to file
-        }
+        } catch (e2) { /* fallback */ }
       }
       if (added > 0) {
         showToast(added + ' arquivo(s) adicionado(s)', 'success');
@@ -323,15 +310,13 @@ async function handleDrop(e) {
     }
   }
 
-  // Fallback
   if (e.dataTransfer.files.length) {
     await handleFiles(e.dataTransfer.files);
   }
 }
 
-// ── FILE TREE BUILDER ───────────────────────────
+// ── FILE TREE ────────────────────────────────────
 function buildTree(fileMap) {
-  // Returns a sorted tree structure
   const tree = {};
   Object.keys(fileMap).sort().forEach(path => {
     const parts = path.split('/');
@@ -341,32 +326,29 @@ function buildTree(fileMap) {
       if (!node[dir]) node[dir] = { __isDir: true, __children: {} };
       node = node[dir].__children;
     }
-    const fname = parts[parts.length - 1];
-    node[fname] = { __isDir: false, __path: path };
+    node[parts[parts.length - 1]] = { __isDir: false, __path: path };
   });
   return tree;
 }
 
 function renderTreeNode(node, prefix, depth) {
   let html = '';
-  // Sort: folders first, then files
   const keys = Object.keys(node).sort((a, b) => {
-    const aDir = node[a].__isDir;
-    const bDir = node[b].__isDir;
-    if (aDir && !bDir) return -1;
-    if (!aDir && bDir) return 1;
+    if (node[a].__isDir && !node[b].__isDir) return -1;
+    if (!node[a].__isDir && node[b].__isDir) return 1;
     return a.localeCompare(b);
   });
 
   for (const key of keys) {
-    const item  = node[key];
+    const item   = node[key];
     const indent = depth * 18;
 
     if (item.__isDir) {
       const folderPath = prefix + key + '/';
-      const isOpen = folders[folderPath] !== false; // default open
+      const folderKey  = folderPath.replace(/\/$/, '');
+      const isOpen     = folders[folderPath] !== false;
       html += `
-        <div class="tree-item" data-folder="${escapeHtml(folderPath)}" onclick="toggleFolder(this, '${escapeHtml(folderPath)}')">
+        <div class="tree-item" data-folder="${escapeHtml(folderKey)}" onclick="toggleFolder(this,'${escapeHtml(folderPath)}')">
           <span class="tree-item-indent" style="width:${indent}px;display:inline-block"></span>
           <span class="tree-item-toggle ${isOpen ? 'open' : ''}">▶</span>
           <span class="tree-item-icon">📁</span>
@@ -397,18 +379,12 @@ function toggleFolder(el, folderPath) {
   if (!subtree) return;
   const isOpen = folders[folderPath] !== false;
   folders[folderPath] = !isOpen;
-  if (folders[folderPath]) {
-    subtree.style.display = '';
-    toggle.classList.add('open');
-  } else {
-    subtree.style.display = 'none';
-    toggle.classList.remove('open');
-  }
+  subtree.style.display = folders[folderPath] ? '' : 'none';
+  toggle.classList.toggle('open', folders[folderPath]);
 }
 
 function previewFile(path) {
   activeFile = path;
-  // Update active state in tree
   document.querySelectorAll('.tree-item').forEach(el => {
     el.classList.toggle('active', el.dataset.file === path);
   });
@@ -418,9 +394,7 @@ function previewFile(path) {
 function deleteItem(e, path, isFolder) {
   e.stopPropagation();
   if (isFolder) {
-    Object.keys(files).forEach(f => {
-      if (f.startsWith(path)) delete files[f];
-    });
+    Object.keys(files).forEach(f => { if (f.startsWith(path)) delete files[f]; });
     if (activeFile && activeFile.startsWith(path)) activeFile = null;
   } else {
     delete files[path];
@@ -429,16 +403,155 @@ function deleteItem(e, path, isFolder) {
   renderWorkspace();
 }
 
-// ── CREATE FOLDER MODAL ─────────────────────────
+// ── TABS ─────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('tab-' + tab);
+  if (btn) btn.classList.add('active');
+
+  if (tab === 'text')  showAddTextModal();
+  if (tab === 'image') showAddImageModal();
+}
+
+function resetTabs() {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  const uploadBtn = document.getElementById('tab-upload');
+  if (uploadBtn) uploadBtn.classList.add('active');
+}
+
+// ── ADD TEXT MODAL ───────────────────────────────
+function showAddTextModal() {
+  showModal(`
+    <div class="modal-header">
+      <span class="modal-title">✏️ Adicionar Texto</span>
+      <button class="modal-close" onclick="closeModal();resetTabs()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="input-group">
+        <label>Nome do arquivo</label>
+        <input class="input-field" type="text" id="text-filename" placeholder="exemplo.txt" autocomplete="off" />
+      </div>
+      <div class="input-group" style="margin-top:14px;">
+        <label>Conteúdo</label>
+        <textarea class="input-field" id="text-content" rows="14"
+          placeholder="Cole ou digite o código aqui..."
+          style="resize:vertical;width:100%;"></textarea>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
+        <button class="btn btn-secondary" onclick="closeModal();resetTabs()">Cancelar</button>
+        <button class="btn btn-primary" onclick="addTextFile()">Adicionar</button>
+      </div>
+    </div>
+  `);
+  setTimeout(() => {
+    const inp = document.getElementById('text-filename');
+    if (inp) inp.focus();
+  }, 50);
+}
+
+function addTextFile() {
+  const filename = (document.getElementById('text-filename')?.value || '').trim();
+  const content  =  document.getElementById('text-content')?.value || '';
+  if (!filename) { showToast('Digite um nome para o arquivo', 'error'); return; }
+  files[filename] = { type: 'text', content };
+  closeModal();
+  resetTabs();
+  showToast('Arquivo "' + filename + '" adicionado!', 'success');
+  renderWorkspace();
+}
+
+// ── ADD IMAGE MODAL ──────────────────────────────
+function showAddImageModal() {
+  showModal(`
+    <div class="modal-header">
+      <span class="modal-title">🖼️ Adicionar Imagem</span>
+      <button class="modal-close" onclick="closeModal();resetTabs()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="image-drop-area" id="img-drop-area" onclick="document.getElementById('img-file-input').click()">
+        <div style="font-size:40px;margin-bottom:12px;">🖼️</div>
+        <div style="font-size:13px;font-weight:600;letter-spacing:1px;text-transform:uppercase;">Arraste ou clique para selecionar</div>
+        <div style="margin-top:8px;font-size:11px;color:var(--text-secondary);">png · jpg · gif · svg · webp</div>
+        <input type="file" id="img-file-input" accept="image/*"
+               style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;" />
+      </div>
+      <div id="img-preview-wrap" class="hidden" style="text-align:center;padding:16px;">
+        <img id="img-preview-el" style="max-width:100%;max-height:180px;border:1px solid var(--border-hover);" />
+        <div id="img-preview-name" style="margin-top:8px;font-size:12px;color:var(--text-secondary);"></div>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
+        <button class="btn btn-secondary" onclick="closeModal();resetTabs()">Cancelar</button>
+        <button class="btn btn-primary" id="img-add-btn" disabled onclick="commitImage()">Adicionar</button>
+      </div>
+    </div>
+  `);
+
+  // State for selected image
+  window._selectedImage = null;
+
+  const dropArea  = document.getElementById('img-drop-area');
+  const fileInput = document.getElementById('img-file-input');
+
+  dropArea.addEventListener('dragover', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropArea.classList.add('dragover');
+  });
+  dropArea.addEventListener('dragleave', () => dropArea.classList.remove('dragover'));
+  dropArea.addEventListener('drop', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    dropArea.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) handleImageSelect(file);
+  });
+  fileInput.addEventListener('change', e => {
+    if (e.target.files[0]) handleImageSelect(e.target.files[0]);
+  });
+}
+
+function handleImageSelect(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    window._selectedImage = { name: file.name, content: e.target.result, mimeType: file.type };
+
+    const previewEl   = document.getElementById('img-preview-el');
+    const previewWrap = document.getElementById('img-preview-wrap');
+    const dropArea    = document.getElementById('img-drop-area');
+    const addBtn      = document.getElementById('img-add-btn');
+    const nameEl      = document.getElementById('img-preview-name');
+
+    if (previewEl)   previewEl.src = e.target.result;
+    if (nameEl)      nameEl.textContent = file.name;
+    if (previewWrap) previewWrap.classList.remove('hidden');
+    if (dropArea)    dropArea.classList.add('hidden');
+    if (addBtn)      addBtn.disabled = false;
+  };
+  reader.readAsDataURL(file);
+}
+
+function commitImage() {
+  const img = window._selectedImage;
+  if (!img) return;
+  const path = 'images/' + img.name;
+  files[path] = { type: 'image', content: img.content, mimeType: img.mimeType };
+  window._selectedImage = null;
+  closeModal();
+  resetTabs();
+  showToast('Imagem "' + img.name + '" adicionada!', 'success');
+  renderWorkspace();
+}
+
+// ── CREATE FOLDER ────────────────────────────────
 function showCreateFolder() {
   showModal(`
     <div class="modal-header">
-      <span class="modal-title">Nova Pasta</span>
+      <span class="modal-title">📁 Nova Pasta</span>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
-      <p class="text-secondary" style="margin-bottom:16px;font-size:13px;">
-        Digite o caminho da pasta (ex: <span class="mono text-accent">src/components</span>)
+      <p style="color:var(--text-secondary);margin-bottom:16px;font-size:12px;letter-spacing:0.5px;">
+        Digite o caminho da pasta (ex: <span style="color:var(--accent);">src/components</span>)
       </p>
       <input class="input-field" id="folder-name-input" placeholder="src/components" autocomplete="off" />
       <div style="margin-top:16px;display:flex;gap:10px;">
@@ -459,11 +572,9 @@ function showCreateFolder() {
 function createFolder() {
   const inp = document.getElementById('folder-name-input');
   if (!inp) return;
-  let name = inp.value.trim().replace(/^\/|\/$/g, '');
+  const name = inp.value.trim().replace(/^\/|\/$/g, '');
   if (!name) { showToast('Digite um nome para a pasta', 'error'); return; }
-  // Create a placeholder .gitkeep file
-  const placeholder = name + '/.gitkeep';
-  files[placeholder] = '';
+  files[name + '/.gitkeep'] = { type: 'text', content: '' };
   closeModal();
   showToast('Pasta "' + name + '" criada', 'success');
   renderWorkspace();
@@ -471,71 +582,8 @@ function createFolder() {
 
 // ── RENDER WORKSPACE ────────────────────────────
 function renderWorkspace() {
-  const app   = document.getElementById('app');
-  const count = Object.keys(files).length;
-  const size  = formatSize(totalSize());
-
-  if (count === 0) {
-    renderUploadMode();
-    return;
-  }
-
-  const tree = buildTree(files);
-  const treeHtml = renderTreeNode(tree, '', 0);
-
-  app.innerHTML = `
-    <div class="upload-mode">
-      <div class="upload-mode-header">
-        <h1>Seus Arquivos</h1>
-        <p>Arraste mais arquivos, crie pastas ou gere o link de compartilhamento</p>
-      </div>
-
-      <!-- Upload Area (compact) -->
-      <div class="upload-area" id="upload-area" style="padding:32px 24px;margin-bottom:20px;">
-        <input type="file" id="file-input" multiple accept="*" />
-        <div class="upload-icon" style="font-size:28px;margin-bottom:8px;">📂</div>
-        <div class="upload-title" style="font-size:14px;margin-bottom:4px;">Adicionar mais arquivos</div>
-        <div class="upload-sub" style="font-size:12px;">Arraste arquivos, pastas ou .zip</div>
-      </div>
-
-      <!-- Workspace -->
-      <div class="workspace">
-        <!-- File Tree Panel -->
-        <div class="panel">
-          <div class="panel-header">
-            <span class="panel-title">Arquivos (${count})</span>
-            <button class="btn btn-ghost btn-sm" onclick="showCreateFolder()" title="Nova Pasta">
-              + Pasta
-            </button>
-          </div>
-          <div class="panel-body">
-            <div class="file-tree" id="file-tree">
-              ${treeHtml || '<div class="tree-empty">Sem arquivos</div>'}
-            </div>
-          </div>
-          <div class="panel-footer">
-            <span class="panel-footer-info">${count} arquivo(s) · ${size}</span>
-            <button class="btn btn-danger btn-sm" onclick="clearAll()">Limpar tudo</button>
-          </div>
-        </div>
-
-        <!-- Preview Panel -->
-        <div class="panel preview-panel" id="preview-panel">
-          ${renderPreviewHTML()}
-        </div>
-      </div>
-
-      <!-- Generate Link -->
-      <div class="generate-section">
-        <button class="btn btn-secondary" onclick="renderUploadMode()">← Voltar</button>
-        <button class="btn btn-primary btn-lg" onclick="generateLink()" id="gen-btn">
-          ⚡ Gerar Link
-        </button>
-      </div>
-    </div>
-  `;
-
-  attachUploadEvents();
+  // renderUploadMode now handles everything including the workspace
+  renderUploadMode();
 }
 
 function renderPreviewHTML() {
@@ -570,10 +618,17 @@ function clearAll() {
   renderUploadMode();
 }
 
-// ── RENDER UPLOAD MODE ───────────────────────────
+// ── UPLOAD MODE ──────────────────────────────────
 function renderUploadMode() {
   activeFile = null;
   const app = document.getElementById('app');
+  const count = Object.keys(files).length;
+  const size  = formatSize(totalSize());
+
+  const treeHtml = count > 0
+    ? renderTreeNode(buildTree(files), '', 0)
+    : `<div class="tree-empty">Nenhum arquivo ainda.<br>Use as opções acima para adicionar.</div>`;
+
   app.innerHTML = `
     <div class="upload-mode">
       <div class="upload-mode-header">
@@ -581,6 +636,14 @@ function renderUploadMode() {
         <p>Faça upload de arquivos, pastas ou .zip e gere um link curto para compartilhar</p>
       </div>
 
+      <!-- Input Tabs — ALWAYS VISIBLE -->
+      <div class="input-tabs">
+        <button class="tab-btn active" id="tab-upload" onclick="switchTab('upload')">📂 Upload Arquivos</button>
+        <button class="tab-btn" id="tab-text"   onclick="switchTab('text')">✏️ Escrever Texto</button>
+        <button class="tab-btn" id="tab-image"  onclick="switchTab('image')">🖼️ Adicionar Imagem</button>
+      </div>
+
+      <!-- Upload Area -->
       <div class="upload-area" id="upload-area">
         <input type="file" id="file-input" multiple accept="*" />
         <div class="upload-icon">📂</div>
@@ -589,12 +652,41 @@ function renderUploadMode() {
         <div class="upload-exts">
           ${['html','css','js','ts','tsx','jsx','json','md','txt','vue','svelte','yaml','py','go','rs'].map(e =>
             `<span class="ext-badge">.${e}</span>`).join('')}
+          <span class="ext-badge">+ imagens</span>
           <span class="ext-badge">+ mais</span>
         </div>
       </div>
+
+      <!-- File Manager — always visible -->
+      <div class="panel" style="margin-bottom:16px;">
+        <div class="panel-header">
+          <span class="panel-title">Arquivos (${count})</span>
+          <button class="btn btn-ghost btn-sm" onclick="showCreateFolder()">+ Pasta</button>
+        </div>
+        <div class="panel-body">
+          <div class="file-tree" id="file-tree">${treeHtml}</div>
+        </div>
+        ${count > 0 ? `
+        <div class="panel-footer">
+          <span class="panel-footer-info">${count} arquivo(s) · ${size}</span>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-danger btn-sm" onclick="clearAll()">Limpar tudo</button>
+            <button class="btn btn-primary btn-sm" onclick="generateLink()" id="gen-btn">⚡ Gerar Link</button>
+          </div>
+        </div>` : ''}
+      </div>
+
+      ${count > 0 ? `
+      <!-- Preview Panel -->
+      <div class="panel preview-panel" id="preview-panel">
+        ${renderPreviewHTML()}
+      </div>
+      ` : ''}
     </div>
   `;
+
   attachUploadEvents();
+  if (count > 0) setupTreeDragAndDrop();
 }
 
 function attachUploadEvents() {
@@ -610,14 +702,13 @@ function attachUploadEvents() {
     if (!area.contains(e.relatedTarget)) area.classList.remove('dragover');
   });
   area.addEventListener('drop', handleDrop);
-
   input.addEventListener('change', e => {
     if (e.target.files.length) handleFiles(e.target.files);
     input.value = '';
   });
 }
 
-// ── GENERATE LINK ───────────────────────────────
+// ── GENERATE LINK ────────────────────────────────
 async function generateLink() {
   const btn   = document.getElementById('gen-btn');
   const count = Object.keys(files).length;
@@ -644,7 +735,7 @@ function showLinkModal(link, count, size) {
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
-      <div class="link-display" id="generated-link">${escapeHtml(link)}</div>
+      <div class="link-display">${escapeHtml(link)}</div>
       <div class="modal-actions">
         <button class="btn btn-primary w-full btn-lg" onclick="copyLink('${escapeHtml(link)}')">
           📋 Copiar Link
@@ -659,9 +750,7 @@ function showLinkModal(link, count, size) {
 }
 
 function copyLink(link) {
-  navigator.clipboard.writeText(link).then(() => {
-    showToast('Link copiado!', 'success');
-  });
+  navigator.clipboard.writeText(link).then(() => showToast('Link copiado!', 'success'));
 }
 
 // ── VIEW MODE ────────────────────────────────────
@@ -671,18 +760,12 @@ async function renderViewMode(binId) {
   const app    = document.getElementById('app');
   const header = document.getElementById('header-actions');
 
-  if (!app) {
-    console.error('[CodeDrop] #app element not found!');
-    return;
-  }
-  if (!header) {
-    console.error('[CodeDrop] #header-actions element not found!');
-  } else {
-    // Header button
+  if (!app) { console.error('[CodeDrop] #app not found!'); return; }
+
+  if (header) {
     header.innerHTML = `<a href="/" class="btn btn-secondary">+ Criar novo drop</a>`;
   }
 
-  // Loading
   app.innerHTML = `
     <div class="loading-state">
       <div class="spinner"></div>
@@ -694,33 +777,30 @@ async function renderViewMode(binId) {
     const data = await loadFromBin(binId);
     console.log('[CodeDrop] data received:', data);
 
-    if (!data || typeof data !== 'object') {
-      throw new Error('Dados inválidos recebidos do servidor');
-    }
+    if (!data || typeof data !== 'object') throw new Error('Dados inválidos recebidos');
 
     files = data;
-
-    const count = Object.keys(files).length;
-    console.log('[CodeDrop] rendering', count, 'files');
-    const size  = formatSize(totalSize());
+    const count  = Object.keys(files).length;
+    const size   = formatSize(totalSize());
     const sorted = Object.keys(files).sort();
 
-    // Build file blocks HTML
     let blocksHtml = '';
     for (const path of sorted) {
-      const content = files[path];
-      const lang    = getLangFromPath(path);
+      const f    = normaliseFile(files[path]);
+      const icon = f.type === 'image' ? '🖼️' : fileIcon(path);
+      const body = f.type === 'image'
+        ? `<div class="view-file-image"><img src="${f.content}" alt="${escapeHtml(path)}" /></div>`
+        : `<pre class="code-block">${escapeHtml(f.content || '')}</pre>`;
+
       blocksHtml += `
         <div class="file-block">
           <div class="file-block-header">
-            <span style="color:var(--text-muted);font-size:12px;">═══</span>
-            <span class="file-block-name">${escapeHtml(path)}</span>
+            <span style="color:var(--text-muted);font-size:11px;">═══</span>
+            <span class="file-block-name">${icon} ${escapeHtml(path)}</span>
             <div class="file-block-separator"></div>
-            <button class="file-block-copy" onclick="copyFileContent('${escapeHtml(path)}')">
-              📋 Copiar
-            </button>
+            ${f.type !== 'image' ? `<button class="file-block-copy" onclick="copyFileContent('${escapeHtml(path)}')">📋 Copiar</button>` : ''}
           </div>
-          <pre class="code-block">${escapeHtml(content)}</pre>
+          ${body}
         </div>`;
     }
 
@@ -734,6 +814,7 @@ async function renderViewMode(binId) {
           <div class="view-actions">
             <button class="btn btn-secondary" onclick="copyAllText()">📄 Copiar Texto</button>
             <button class="btn btn-secondary" onclick="copyAllMarkdown()">📝 Copiar Markdown</button>
+            <button class="btn btn-primary"   onclick="downloadAsPDF()">⬇ Baixar PDF</button>
           </div>
         </div>
         <div class="file-blocks">${blocksHtml}</div>
@@ -744,54 +825,141 @@ async function renderViewMode(binId) {
     app.innerHTML = `
       <div class="error-state">
         <div class="error-icon">💀</div>
-        <div class="error-title">Oops! Drop não encontrado</div>
+        <div class="error-title">Drop não encontrado</div>
         <div class="error-msg">${escapeHtml(err.message)}</div>
-        <div class="error-msg" style="margin-top:8px;font-size:10px;color:var(--text-muted);">ID: ${escapeHtml(binId)}</div>
-        <a href="/" class="btn btn-primary" style="margin-top:16px;">← Criar novo drop</a>
+        <div class="error-msg" style="margin-top:6px;font-size:10px;color:var(--text-muted);">ID: ${escapeHtml(binId)}</div>
+        <a href="/" class="btn btn-primary" style="margin-top:20px;">← Criar novo drop</a>
       </div>`;
   }
 }
 
-function getLangFromPath(path) {
-  const ext = fileExt(path.split('/').pop());
-  const map = {
-    '.js':'javascript','.ts':'typescript','.tsx':'tsx','.jsx':'jsx',
-    '.html':'html','.css':'css','.json':'json','.md':'markdown',
-    '.py':'python','.rb':'ruby','.go':'go','.rs':'rust',
-    '.java':'java','.c':'c','.cpp':'cpp','.cs':'csharp',
-    '.php':'php','.sh':'bash','.yaml':'yaml','.yml':'yaml',
-    '.xml':'xml','.svg':'xml','.vue':'vue','.svelte':'svelte',
-    '.txt':'',
-  };
-  return map[ext] || '';
-}
-
+// ── COPY FUNCTIONS ───────────────────────────────
 function copyFileContent(path) {
-  const content = files[path] || '';
-  navigator.clipboard.writeText(content).then(() => {
-    showToast('Conteúdo de ' + path.split('/').pop() + ' copiado!', 'success');
+  const f = normaliseFile(files[path]);
+  if (f.type === 'image') { showToast('Imagens não podem ser copiadas como texto', 'error'); return; }
+  navigator.clipboard.writeText(f.content || '').then(() => {
+    showToast('Conteúdo copiado!', 'success');
   });
 }
 
 function copyAllText() {
   const sorted = Object.keys(files).sort();
-  const parts  = sorted.map(path =>
-    `=== ${path} ===\n${files[path]}`
-  );
+  const parts  = sorted
+    .filter(path => normaliseFile(files[path]).type !== 'image')
+    .map(path => `=== ${path} ===\n${normaliseFile(files[path]).content}`);
   navigator.clipboard.writeText(parts.join('\n\n')).then(() => {
-    showToast('Todos os arquivos copiados como texto!', 'success');
+    showToast('Arquivos copiados como texto!', 'success');
   });
 }
 
 function copyAllMarkdown() {
   const sorted = Object.keys(files).sort();
-  const parts  = sorted.map(path => {
-    const lang = getLangFromPath(path);
-    return `# ${path}\n\`\`\`${lang}\n${files[path]}\n\`\`\``;
-  });
+  const parts  = sorted
+    .filter(path => normaliseFile(files[path]).type !== 'image')
+    .map(path => {
+      const lang = getLangFromPath(path);
+      return `# ${path}\n\`\`\`${lang}\n${normaliseFile(files[path]).content}\n\`\`\``;
+    });
   navigator.clipboard.writeText(parts.join('\n\n')).then(() => {
-    showToast('Todos os arquivos copiados como Markdown!', 'success');
+    showToast('Arquivos copiados como Markdown!', 'success');
   });
+}
+
+// ── DOWNLOAD PDF ─────────────────────────────────
+async function downloadAsPDF() {
+  if (!window.jspdf) { showToast('Biblioteca PDF não carregada', 'error'); return; }
+  showToast('Gerando PDF…', 'info');
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  const pageW  = doc.internal.pageSize.getWidth();
+  const pageH  = doc.internal.pageSize.getHeight();
+  const margin = 15;
+  const maxW   = pageW - margin * 2;
+  let y = margin;
+
+  function checkPage(needed = 10) {
+    if (y + needed > pageH - margin) { doc.addPage(); y = margin; }
+  }
+
+  // Title
+  doc.setFontSize(20);
+  doc.setFont('courier', 'bold');
+  doc.setTextColor(153, 69, 255);
+  doc.text('CODEDROP EXPORT', margin, y); y += 8;
+
+  // Date
+  doc.setFontSize(9);
+  doc.setFont('courier', 'normal');
+  doc.setTextColor(100, 100, 100);
+  doc.text('Exportado em: ' + new Date().toLocaleString('pt-BR'), margin, y); y += 5;
+
+  const sorted = Object.entries(files).sort(([a], [b]) => a.localeCompare(b));
+  doc.text(sorted.length + ' arquivo(s)', margin, y); y += 10;
+
+  // Separator
+  doc.setDrawColor(153, 69, 255);
+  doc.setLineWidth(0.4);
+  doc.line(margin, y, pageW - margin, y); y += 8;
+
+  for (const [path, rawFile] of sorted) {
+    const f = normaliseFile(rawFile);
+    checkPage(20);
+
+    // File header
+    doc.setFontSize(11);
+    doc.setFont('courier', 'bold');
+    doc.setTextColor(153, 69, 255);
+    doc.text('=== ' + path + ' ===', margin, y); y += 6;
+    doc.setTextColor(30, 30, 30);
+
+    if (f.type === 'image') {
+      try {
+        let fmt = 'JPEG';
+        if (f.mimeType === 'image/png')  fmt = 'PNG';
+        if (f.mimeType === 'image/gif')  fmt = 'GIF';
+        if (f.mimeType === 'image/webp') fmt = 'WEBP';
+
+        const imgProps = doc.getImageProperties(f.content);
+        const ratio    = imgProps.width / imgProps.height;
+        const imgW     = Math.min(maxW, 100);
+        const imgH     = imgW / ratio;
+
+        checkPage(imgH + 6);
+        doc.addImage(f.content, fmt, margin, y, imgW, imgH);
+        y += imgH + 8;
+      } catch (imgErr) {
+        console.warn('[PDF] image failed:', imgErr);
+        doc.setFontSize(9);
+        doc.setFont('courier', 'italic');
+        doc.setTextColor(150, 50, 50);
+        doc.text('[Imagem não pôde ser renderizada]', margin, y); y += 7;
+      }
+    } else {
+      doc.setFontSize(8);
+      doc.setFont('courier', 'normal');
+      doc.setTextColor(40, 40, 40);
+      const rawLines = (f.content || '').split('\n');
+      for (const rawLine of rawLines) {
+        const wrapped = doc.splitTextToSize(rawLine || ' ', maxW);
+        for (const wl of wrapped) {
+          checkPage(4);
+          doc.text(wl, margin, y); y += 4;
+        }
+      }
+      y += 6;
+    }
+
+    // Separator between files
+    checkPage(4);
+    doc.setDrawColor(60, 60, 60);
+    doc.setLineWidth(0.1);
+    doc.line(margin, y, pageW - margin, y); y += 6;
+  }
+
+  doc.save('codedrop-export.pdf');
+  showToast('PDF baixado com sucesso!', 'success');
 }
 
 // ── MODAL ────────────────────────────────────────
@@ -806,12 +974,6 @@ function closeModal() {
   document.getElementById('modal-overlay').classList.add('hidden');
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('modal-overlay').addEventListener('click', e => {
-    if (e.target === e.currentTarget) closeModal();
-  });
-});
-
 // ── TOAST ────────────────────────────────────────
 let toastTimer = null;
 function showToast(msg, type = 'info') {
@@ -822,6 +984,122 @@ function showToast(msg, type = 'info') {
   toastTimer = setTimeout(() => toast.classList.add('hidden'), 3000);
 }
 
+// ── TREE DRAG AND DROP ───────────────────────────
+function setupTreeDragAndDrop() {
+  const tree = document.getElementById('file-tree');
+  if (!tree) return;
+
+  // Make all tree items draggable
+  tree.querySelectorAll('.tree-item').forEach(item => {
+    const path = item.dataset.file || item.dataset.folder;
+    if (!path) return;
+    item.setAttribute('draggable', 'true');
+    item.style.cursor = 'grab';
+
+    item.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', path);
+      e.dataTransfer.effectAllowed = 'move';
+      item.classList.add('dragging');
+    });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+    });
+  });
+
+  // Folder items accept drops
+  tree.querySelectorAll('[data-folder]').forEach(folder => {
+    const folderPath = folder.dataset.folder.replace(/\/$/, '');
+
+    folder.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+      folder.classList.add('drag-over');
+    });
+    folder.addEventListener('dragleave', e => {
+      if (!folder.contains(e.relatedTarget)) folder.classList.remove('drag-over');
+    });
+    folder.addEventListener('drop', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      folder.classList.remove('drag-over');
+      const sourcePath = e.dataTransfer.getData('text/plain');
+      if (!sourcePath) return;
+      // Prevent moving folder into itself
+      if (sourcePath === folderPath || folderPath.startsWith(sourcePath + '/')) {
+        showToast('Não é possível mover pasta para dentro de si mesma', 'error');
+        return;
+      }
+      moveFile(sourcePath, folderPath);
+    });
+  });
+
+  // Root tree area accepts drops (move to root)
+  tree.addEventListener('dragover', e => {
+    if (e.target === tree) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      tree.classList.add('drag-over');
+    }
+  });
+  tree.addEventListener('dragleave', e => {
+    if (e.target === tree) tree.classList.remove('drag-over');
+  });
+  tree.addEventListener('drop', e => {
+    if (e.target !== tree) return;
+    e.preventDefault();
+    tree.classList.remove('drag-over');
+    const sourcePath = e.dataTransfer.getData('text/plain');
+    if (sourcePath) moveFileToRoot(sourcePath);
+  });
+}
+
+function moveFile(sourcePath, targetFolder) {
+  const isSourceFolder = !files[sourcePath]; // it's a folder if not a direct file key
+  const sourceIsFolder = sourcePath.endsWith('/') || Object.keys(files).some(k => k.startsWith(sourcePath + '/'));
+
+  const fileName = sourcePath.split('/').pop();
+  const newPath  = targetFolder ? `${targetFolder}/${fileName}` : fileName;
+
+  if (newPath === sourcePath) return;
+
+  // Check conflict
+  if (files[newPath]) {
+    showToast('Já existe um arquivo com esse nome nessa pasta', 'error');
+    return;
+  }
+
+  if (files[sourcePath]) {
+    // It's a file
+    files[newPath] = files[sourcePath];
+    delete files[sourcePath];
+    if (activeFile === sourcePath) activeFile = newPath;
+  } else {
+    // It's a folder — move all children
+    const prefix    = sourcePath + '/';
+    const newPrefix = newPath + '/';
+    const toMove    = Object.keys(files).filter(k => k.startsWith(prefix));
+    if (toMove.length === 0) { showToast('Pasta vazia ou não encontrada', 'error'); return; }
+    toMove.forEach(oldKey => {
+      const rel    = oldKey.slice(prefix.length);
+      const newKey = newPrefix + rel;
+      files[newKey] = files[oldKey];
+      delete files[oldKey];
+      if (activeFile === oldKey) activeFile = newKey;
+    });
+  }
+
+  showToast('Movido para ' + (targetFolder || 'raiz'), 'success');
+  renderUploadMode();
+}
+
+function moveFileToRoot(sourcePath) {
+  const fileName = sourcePath.split('/').pop();
+  if (!sourcePath.includes('/')) return; // already at root
+  moveFile(sourcePath, '');
+}
+
 // ── INIT ─────────────────────────────────────────
 function init() {
   console.log('[CodeDrop] init() called');
@@ -829,18 +1107,22 @@ function init() {
   console.log('[CodeDrop] route:', route);
 
   if (route.mode === 'view' && route.binId) {
-    console.log('[CodeDrop] → entering view mode');
+    console.log('[CodeDrop] → view mode');
     renderViewMode(route.binId);
   } else {
-    console.log('[CodeDrop] → entering upload mode');
+    console.log('[CodeDrop] → upload mode');
     renderUploadMode();
   }
 }
 
-// Handle browser back/forward
 window.addEventListener('popstate', init);
 
 document.addEventListener('DOMContentLoaded', () => {
   console.log('[CodeDrop] DOMContentLoaded fired');
+
+  document.getElementById('modal-overlay').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeModal();
+  });
+
   init();
 });
