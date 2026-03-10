@@ -18,19 +18,37 @@ const EXTENSIONS = [
   '.prettierrc', '.eslintrc', '.babelrc',
 ];
 
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico'];
+
 // ── STATE ───────────────────────────────────────
-let files       = {};   // { "path/to/file.ext": "content..." }
+// files shape:
+//   text  → { type: 'text',  content: 'string...' }
+//   image → { type: 'image', content: 'data:image/...;base64,...', mimeType: 'image/png' }
+let files       = {};
 let folders     = {};   // { "path/": true } — collapsed/expanded state
 let activeFile  = null; // currently previewed file path
 
 // ── UTILS ───────────────────────────────────────
 function isTextFile(name) {
   const lower = name.toLowerCase();
-  // exact filenames with no extension
   const noExtNames = ['.gitignore', '.env', 'dockerfile', '.editorconfig',
                       '.prettierrc', '.eslintrc', '.babelrc', '.npmrc'];
   if (noExtNames.some(n => lower.endsWith(n))) return true;
   return EXTENSIONS.some(ext => lower.endsWith(ext));
+}
+
+function isImageFile(name) {
+  const lower = name.toLowerCase();
+  return IMAGE_EXTENSIONS.some(ext => lower.endsWith(ext));
+}
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = e => resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 function formatSize(bytes) {
@@ -40,7 +58,17 @@ function formatSize(bytes) {
 }
 
 function totalSize() {
-  return Object.values(files).reduce((s, c) => s + c.length, 0);
+  return Object.values(files).reduce((s, f) => {
+    const c = typeof f === 'object' ? f.content : f;
+    return s + (c ? c.length : 0);
+  }, 0);
+}
+
+// Normalise a file entry — old drops stored plain strings;
+// new drops store { type, content }. Always return { type, content }.
+function normaliseFile(f) {
+  if (typeof f === 'string') return { type: 'text', content: f };
+  return f;
 }
 
 function fileExt(name) {
@@ -50,6 +78,7 @@ function fileExt(name) {
 
 function fileIcon(name) {
   const ext = fileExt(name.split('/').pop());
+  if (IMAGE_EXTENSIONS.includes(ext)) return '🖼️';
   const map = {
     '.html': '🌐', '.css': '🎨', '.js': '📜', '.ts': '📘',
     '.tsx': '⚛️',  '.jsx': '⚛️', '.json': '📋', '.md': '📝',
@@ -173,13 +202,24 @@ async function processZip(file) {
   const out  = {};
   const promises = [];
   zip.forEach((relativePath, entry) => {
-    if (!entry.dir && isTextFile(relativePath)) {
+    if (entry.dir) return;
+    const clean = relativePath.replace(/^__MACOSX\//, '').replace(/^\._/, '');
+    if (!clean || clean.startsWith('.')) return;
+
+    if (isTextFile(relativePath)) {
       const p = entry.async('string').then(content => {
-        // Strip leading __MACOSX or dot folders
-        const clean = relativePath.replace(/^__MACOSX\//, '').replace(/^\._/, '');
-        if (clean && !clean.startsWith('.')) {
-          out[clean] = content;
-        }
+        out[clean] = { type: 'text', content };
+      });
+      promises.push(p);
+    } else if (isImageFile(relativePath)) {
+      const p = entry.async('base64').then(b64 => {
+        const ext  = fileExt(relativePath).replace('.', '');
+        const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+                   : ext === 'png'  ? 'image/png'
+                   : ext === 'gif'  ? 'image/gif'
+                   : ext === 'webp' ? 'image/webp'
+                   : 'image/' + ext;
+        out[clean] = { type: 'image', content: `data:${mime};base64,${b64}`, mimeType: mime };
       });
       promises.push(p);
     }
@@ -195,7 +235,10 @@ async function processEntry(entry, basePath) {
     const file = await new Promise(res => entry.file(res));
     const fullPath = basePath + entry.name;
     if (isTextFile(fullPath)) {
-      out[fullPath] = await file.text();
+      out[fullPath] = { type: 'text', content: await file.text() };
+    } else if (isImageFile(fullPath)) {
+      const dataUrl = await readFileAsDataURL(file);
+      out[fullPath] = { type: 'image', content: dataUrl, mimeType: file.type };
     }
   } else if (entry.isDirectory) {
     const reader = entry.createReader();
@@ -233,8 +276,11 @@ async function handleFiles(fileList) {
         showToast('Erro ao extrair ZIP: ' + e.message, 'error');
       }
     } else if (isTextFile(file.name)) {
-      const content = await file.text();
-      files[file.name] = content;
+      files[file.name] = { type: 'text', content: await file.text() };
+      added++;
+    } else if (isImageFile(file.name)) {
+      const dataUrl = await readFileAsDataURL(file);
+      files[file.name] = { type: 'image', content: dataUrl, mimeType: file.type };
       added++;
     }
   }
@@ -500,12 +546,16 @@ function renderPreviewHTML() {
         <div class="preview-empty-text text-muted">Clique em um arquivo para visualizar</div>
       </div>`;
   }
-  return `
+  const f = normaliseFile(files[activeFile]);
+  const header = `
     <div class="preview-header">
       <span class="preview-filename">${escapeHtml(activeFile)}</span>
       <button class="btn btn-ghost btn-sm" onclick="activeFile=null;renderPreview()">✕ Fechar</button>
-    </div>
-    <pre class="code-block">${escapeHtml(files[activeFile])}</pre>`;
+    </div>`;
+  if (f.type === 'image') {
+    return header + `<div class="preview-image-wrap"><img src="${f.content}" alt="${escapeHtml(activeFile)}" /></div>`;
+  }
+  return header + `<pre class="code-block">${escapeHtml(f.content)}</pre>`;
 }
 
 function renderPreview() {
