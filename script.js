@@ -72,45 +72,99 @@ function escapeHtml(str) {
 
 // ── ROUTING ─────────────────────────────────────
 function getRoute() {
-  const path  = window.location.pathname;
-  const match = path.match(/^\/v\/([a-zA-Z0-9]+)$/);
-  return match ? { mode: 'view', binId: match[1] } : { mode: 'upload' };
+  const path = window.location.pathname;
+  console.log('[CodeDrop] pathname:', path);
+
+  // Match /v/ID — ID can be alphanumeric, including dpaste IDs like "ABC1DEF2"
+  const match = path.match(/^\/v\/([a-zA-Z0-9_-]+)$/);
+
+  if (match) {
+    console.log('[CodeDrop] mode: view | id:', match[1]);
+    return { mode: 'view', binId: match[1] };
+  }
+
+  console.log('[CodeDrop] mode: upload');
+  return { mode: 'upload' };
 }
 
 // ── DPASTE API ───────────────────────────────────
 async function saveToBin(data) {
   const compressed = LZString.compressToBase64(JSON.stringify(data));
+  console.log('[CodeDrop] saveToBin — compressed length:', compressed.length);
 
   const formData = new URLSearchParams();
   formData.append('content', compressed);
   formData.append('syntax', 'text');
-  formData.append('expiry_days', '2');
+  formData.append('expiry_days', '365');
 
-  const res = await fetch(DPASTE_API, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: formData.toString(),
-  });
+  // Try direct POST first (dpaste supports CORS on POST)
+  let res;
+  try {
+    res = await fetch(DPASTE_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData.toString(),
+    });
+    console.log('[CodeDrop] save response status:', res.status);
+  } catch (directErr) {
+    console.warn('[CodeDrop] direct POST failed, trying proxy:', directErr.message);
+    const proxyPost = `https://corsproxy.io/?url=${encodeURIComponent(DPASTE_API)}`;
+    res = await fetch(proxyPost, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData.toString(),
+    });
+    console.log('[CodeDrop] proxy save response status:', res.status);
+  }
 
-  if (!res.ok) throw new Error('Falha ao salvar: ' + res.status);
+  if (!res.ok) throw new Error('Falha ao salvar: HTTP ' + res.status);
 
   // dpaste retorna a URL no corpo da resposta, ex: "https://dpaste.com/ABC123\n"
   const pasteUrl = await res.text();
-  const pasteId  = pasteUrl.trim().split('/').pop();
+  console.log('[CodeDrop] paste URL returned:', pasteUrl.trim());
+  const pasteId  = pasteUrl.trim().replace(/\/$/, '').split('/').pop();
+  console.log('[CodeDrop] extracted pasteId:', pasteId);
 
   return pasteId;
 }
 
 async function loadFromBin(pasteId) {
-  // dpaste serve conteúdo raw adicionando .txt no final
-  const res = await fetch(`https://dpaste.com/${pasteId}.txt`);
+  console.log('[CodeDrop] loadFromBin → id:', pasteId);
 
-  if (!res.ok) throw new Error('Paste não encontrado: ' + res.status);
+  // dpaste CORS workaround: use a CORS proxy to fetch the raw .txt content
+  const directUrl = `https://dpaste.com/${pasteId}.txt`;
+  const proxyUrl  = `https://corsproxy.io/?url=${encodeURIComponent(directUrl)}`;
 
-  const compressed = await res.text();
-  return JSON.parse(LZString.decompressFromBase64(compressed.trim()));
+  console.log('[CodeDrop] fetching via proxy:', proxyUrl);
+
+  let compressed;
+  try {
+    const res = await fetch(proxyUrl);
+    console.log('[CodeDrop] proxy response status:', res.status);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    compressed = await res.text();
+  } catch (proxyErr) {
+    console.warn('[CodeDrop] proxy failed, trying direct:', proxyErr.message);
+    // Fallback: try direct (works if CORS is allowed by dpaste for the given browser)
+    const res2 = await fetch(directUrl);
+    console.log('[CodeDrop] direct response status:', res2.status);
+    if (!res2.ok) throw new Error('Paste não encontrado: HTTP ' + res2.status);
+    compressed = await res2.text();
+  }
+
+  console.log('[CodeDrop] raw data length:', compressed.length);
+  const trimmed = compressed.trim();
+
+  const decompressed = LZString.decompressFromBase64(trimmed);
+  if (!decompressed) {
+    console.error('[CodeDrop] decompression failed — raw snippet:', trimmed.slice(0, 120));
+    throw new Error('Falha ao descomprimir: dados corrompidos ou formato inválido');
+  }
+
+  console.log('[CodeDrop] decompressed length:', decompressed.length);
+  const parsed = JSON.parse(decompressed);
+  console.log('[CodeDrop] files loaded:', Object.keys(parsed).length);
+  return parsed;
 }
 
 // ── ZIP PROCESSING ──────────────────────────────
@@ -562,11 +616,21 @@ function copyLink(link) {
 
 // ── VIEW MODE ────────────────────────────────────
 async function renderViewMode(binId) {
+  console.log('[CodeDrop] renderViewMode → binId:', binId);
+
   const app    = document.getElementById('app');
   const header = document.getElementById('header-actions');
 
-  // Header button
-  header.innerHTML = `<a href="/" class="btn btn-secondary">+ Criar novo drop</a>`;
+  if (!app) {
+    console.error('[CodeDrop] #app element not found!');
+    return;
+  }
+  if (!header) {
+    console.error('[CodeDrop] #header-actions element not found!');
+  } else {
+    // Header button
+    header.innerHTML = `<a href="/" class="btn btn-secondary">+ Criar novo drop</a>`;
+  }
 
   // Loading
   app.innerHTML = `
@@ -576,10 +640,18 @@ async function renderViewMode(binId) {
     </div>`;
 
   try {
+    console.log('[CodeDrop] calling loadFromBin…');
     const data = await loadFromBin(binId);
+    console.log('[CodeDrop] data received:', data);
+
+    if (!data || typeof data !== 'object') {
+      throw new Error('Dados inválidos recebidos do servidor');
+    }
+
     files = data;
 
     const count = Object.keys(files).length;
+    console.log('[CodeDrop] rendering', count, 'files');
     const size  = formatSize(totalSize());
     const sorted = Object.keys(files).sort();
 
@@ -618,11 +690,13 @@ async function renderViewMode(binId) {
       </div>`;
 
   } catch (err) {
+    console.error('[CodeDrop] renderViewMode error:', err);
     app.innerHTML = `
       <div class="error-state">
         <div class="error-icon">💀</div>
         <div class="error-title">Oops! Drop não encontrado</div>
         <div class="error-msg">${escapeHtml(err.message)}</div>
+        <div class="error-msg" style="margin-top:8px;font-size:10px;color:var(--text-muted);">ID: ${escapeHtml(binId)}</div>
         <a href="/" class="btn btn-primary" style="margin-top:16px;">← Criar novo drop</a>
       </div>`;
   }
@@ -700,10 +774,15 @@ function showToast(msg, type = 'info') {
 
 // ── INIT ─────────────────────────────────────────
 function init() {
+  console.log('[CodeDrop] init() called');
   const route = getRoute();
-  if (route.mode === 'view') {
+  console.log('[CodeDrop] route:', route);
+
+  if (route.mode === 'view' && route.binId) {
+    console.log('[CodeDrop] → entering view mode');
     renderViewMode(route.binId);
   } else {
+    console.log('[CodeDrop] → entering upload mode');
     renderUploadMode();
   }
 }
@@ -711,4 +790,7 @@ function init() {
 // Handle browser back/forward
 window.addEventListener('popstate', init);
 
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('[CodeDrop] DOMContentLoaded fired');
+  init();
+});
