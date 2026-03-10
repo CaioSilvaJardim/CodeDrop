@@ -5,7 +5,7 @@
 'use strict';
 
 // ── CONFIG ─────────────────────────────────────
-const JSONBLOB_URL = 'https://jsonblob.com/api/jsonBlob';
+const DPASTE_API = 'https://dpaste.com/api/v2/';
 
 const EXTENSIONS = [
   '.html', '.css', '.js', '.ts', '.tsx', '.jsx',
@@ -77,33 +77,40 @@ function getRoute() {
   return match ? { mode: 'view', binId: match[1] } : { mode: 'upload' };
 }
 
-// ── JSONBLOB API ─────────────────────────────────
+// ── DPASTE API ───────────────────────────────────
 async function saveToBin(data) {
   const compressed = LZString.compressToBase64(JSON.stringify(data));
-  const res = await fetch(JSONBLOB_URL, {
+
+  const formData = new URLSearchParams();
+  formData.append('content', compressed);
+  formData.append('syntax', 'text');
+  formData.append('expiry_days', '2');
+
+  const res = await fetch(DPASTE_API, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: JSON.stringify({ data: compressed }),
+    body: formData.toString(),
   });
+
   if (!res.ok) throw new Error('Falha ao salvar: ' + res.status);
-  // JSONBlob retorna o ID no header Location
-  const location = res.headers.get('Location');
-  const blobId = location.split('/').pop();
-  return blobId;
+
+  // dpaste retorna a URL no corpo da resposta, ex: "https://dpaste.com/ABC123\n"
+  const pasteUrl = await res.text();
+  const pasteId  = pasteUrl.trim().split('/').pop();
+
+  return pasteId;
 }
 
-async function loadFromBin(blobId) {
-  const res = await fetch(`${JSONBLOB_URL}/${blobId}`, {
-    headers: {
-      'Accept': 'application/json',
-    },
-  });
-  if (!res.ok) throw new Error('Blob não encontrado: ' + res.status);
-  const result = await res.json();
-  return JSON.parse(LZString.decompressFromBase64(result.data));
+async function loadFromBin(pasteId) {
+  // dpaste serve conteúdo raw adicionando .txt no final
+  const res = await fetch(`https://dpaste.com/${pasteId}.txt`);
+
+  if (!res.ok) throw new Error('Paste não encontrado: ' + res.status);
+
+  const compressed = await res.text();
+  return JSON.parse(LZString.decompressFromBase64(compressed.trim()));
 }
 
 // ── ZIP PROCESSING ──────────────────────────────
