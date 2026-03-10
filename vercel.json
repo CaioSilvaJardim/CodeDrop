@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/v/:binId", "destination": "/index.html" },
+    { "source": "/(.*)",     "destination": "/index.html" }
+  ]
+}
